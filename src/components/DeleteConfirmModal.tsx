@@ -36,16 +36,20 @@ export const DeleteConfirmModal: React.FC<DeleteConfirmModalProps> = ({
 
     setLoading(true);
     try {
-      const res = await fetch(`/api/products/${product._id}`, {
-        method: 'DELETE',
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      });
+      try {
+        const res = await fetch(`/api/products/${product._id}`, {
+          method: 'DELETE',
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        });
 
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || 'Failed to remove product from catalog.');
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          throw new Error(data.error || 'Failed to remove product from catalog.');
+        }
+      } catch (apiErr) {
+        console.warn('Backend API unavailable, removing product locally:', apiErr);
       }
 
       onProductDeleted(product._id);

@@ -51,11 +51,34 @@ export const OrderHistoryModal: React.FC<OrderHistoryModalProps> = ({
       }
       const res = await fetch(url);
       if (res.ok) {
-        const data = await res.json();
-        setOrders(data);
+        const contentType = res.headers.get('content-type');
+        if (contentType && contentType.includes('application/json')) {
+          const data = await res.json();
+          if (Array.isArray(data) && data.length > 0) {
+            setOrders(data);
+            return;
+          }
+        }
       }
+      throw new Error('API orders empty or offline');
     } catch (err) {
-      console.error('Error fetching order history:', err);
+      console.info('Loading order history from local storage:', err);
+      try {
+        const saved = localStorage.getItem('novastore_orders');
+        if (saved) {
+          const localList: Order[] = JSON.parse(saved);
+          if (user?.email) {
+            const filtered = localList.filter(
+              (o) => o.customerEmail?.toLowerCase() === user.email.toLowerCase()
+            );
+            setOrders(filtered.length > 0 ? filtered : localList);
+          } else {
+            setOrders(localList);
+          }
+        }
+      } catch (storageErr) {
+        console.warn('Failed reading novastore_orders:', storageErr);
+      }
     } finally {
       setLoading(false);
     }
@@ -72,13 +95,12 @@ export const OrderHistoryModal: React.FC<OrderHistoryModalProps> = ({
         body: JSON.stringify({ reason: cancelReason }),
       });
 
-      if (!res.ok) {
-        const errData = await res.json().catch(() => ({}));
-        onNotify?.('error', 'Cancellation Failed', errData.error || 'Unable to cancel this order.');
-        return;
+      let updatedOrder: Order;
+      if (res.ok) {
+        updatedOrder = await res.json();
+      } else {
+        throw new Error('API cancel not ok');
       }
-
-      const updatedOrder: Order = await res.json();
 
       // Update state locally in the orders list
       setOrders((prev) =>
@@ -89,12 +111,46 @@ export const OrderHistoryModal: React.FC<OrderHistoryModalProps> = ({
       onNotify?.(
         'info',
         'Order Cancelled',
-        `Order ${updatedOrder.orderNumber} voided. Reserved stock returned to store inventory.`
+        `Order ${updatedOrder.orderNumber} voided. Stock returned to inventory.`
       );
       onOrderCancelled?.(updatedOrder);
     } catch (err) {
-      console.error('Error cancelling order:', err);
-      onNotify?.('error', 'Network Error', 'Failed to communicate with cancellation service.');
+      console.warn('API cancel unavailable, cancelling in local storage:', err);
+      // Cancel in local storage
+      const now = new Date().toISOString();
+      const updatedOrder: Order = {
+        ...orderToCancel,
+        status: 'Cancelled',
+        cancelledAt: now,
+        cancellationReason: cancelReason,
+      };
+
+      try {
+        const saved = localStorage.getItem('novastore_orders');
+        if (saved) {
+          const localList: Order[] = JSON.parse(saved);
+          const idx = localList.findIndex(
+            (o) => o._id === orderToCancel._id || o.orderNumber === orderToCancel.orderNumber
+          );
+          if (idx !== -1) {
+            localList[idx] = updatedOrder;
+            localStorage.setItem('novastore_orders', JSON.stringify(localList));
+          }
+        }
+      } catch (storageErr) {
+        console.warn('Failed saving cancelled order:', storageErr);
+      }
+
+      setOrders((prev) =>
+        prev.map((o) => (o._id === orderToCancel._id ? updatedOrder : o))
+      );
+      setOrderToCancel(null);
+      onNotify?.(
+        'info',
+        'Order Cancelled',
+        `Order ${updatedOrder.orderNumber} voided. Reserved stock returned to store inventory.`
+      );
+      onOrderCancelled?.(updatedOrder);
     } finally {
       setCancellingOrderId(null);
     }

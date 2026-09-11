@@ -1,5 +1,5 @@
 import crypto from 'crypto';
-import { allProducts } from './data';
+import { allProducts } from '../src/data';
 
 export interface DBProduct {
   _id: string;
