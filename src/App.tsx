@@ -9,6 +9,16 @@ import {
 } from 'lucide-react';
 import { Product, CartItem, User, Order, ViewMode } from './types';
 import { allProducts } from './data';
+import {
+  getInitialCatalog,
+  sanitizeAndPersistCatalog,
+  saveDeletedProductId,
+  removeCustomProduct,
+  saveCustomProduct,
+  resetFactoryCatalog,
+  getDeletedProductIds,
+  getCustomAddedProducts,
+} from './utils/catalogStorage';
 import { Navbar } from './components/Navbar';
 import { ProductCard } from './components/ProductCard';
 import { ProductDetail } from './components/ProductDetail';
@@ -33,19 +43,8 @@ export default function App() {
   const [currentView, setCurrentView] = useState<ViewMode>('catalog');
   const [selectedProductId, setSelectedProductId] = useState<string | null>(null);
 
-  // Products Data State - Preloaded with all 90 items for instant render & static Vercel compatibility
-  const [products, setProducts] = useState<Product[]>(() => {
-    try {
-      const saved = localStorage.getItem('novastore_catalog');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
-      }
-    } catch (e) {
-      console.warn('LocalStorage load catalog failed:', e);
-    }
-    return allProducts;
-  });
+  // Products Data State - Preloaded with persistent catalog state (respecting deletions & additions)
+  const [products, setProducts] = useState<Product[]>(() => getInitialCatalog());
   const [loading, setLoading] = useState(false);
 
   // Filter & Search State
@@ -132,16 +131,15 @@ export default function App() {
       }
       const data = await res.json();
       if (Array.isArray(data) && data.length > 0) {
-        setProducts(data);
-        try {
-          localStorage.setItem('novastore_catalog', JSON.stringify(data));
-        } catch {}
+        // Sanitize with local deletion and addition tracking
+        const sanitized = sanitizeAndPersistCatalog(data);
+        setProducts(sanitized);
+        return;
       }
     } catch (err) {
-      // Backend not running (e.g. deployed on Vercel as static site)
-      console.info('Using embedded product catalog (90 items active):', err);
-      // Ensure products state is filled with allProducts
-      setProducts((prev) => (prev.length > 0 ? prev : allProducts));
+      // Backend not running (e.g. deployed on Vercel as static site) or offline
+      console.info('Using local persistent catalog tracking:', err);
+      setProducts(getInitialCatalog());
     } finally {
       setLoading(false);
     }
@@ -303,13 +301,16 @@ export default function App() {
 
   // Store Owner Catalog Management Handlers
   const handleProductAdded = (newProduct: Product) => {
+    saveCustomProduct(newProduct);
     setProducts((prev) => {
-      const updated = [newProduct, ...prev];
+      const filtered = prev.filter((p) => p._id !== newProduct._id);
+      const updated = [newProduct, ...filtered];
       try {
         localStorage.setItem('novastore_catalog', JSON.stringify(updated));
       } catch {}
       return updated;
     });
+    addToast('success', 'SKU Added', `"${newProduct.name}" is now live in your store catalog.`);
   };
 
   const handleOpenDeleteModal = (product: Product) => {
@@ -317,6 +318,11 @@ export default function App() {
   };
 
   const handleProductDeleted = (deletedId: string) => {
+    // 1. Permanently record deletion in localStorage so it never returns on refresh
+    saveDeletedProductId(deletedId);
+    // 2. Remove from custom products if it was a custom added SKU
+    removeCustomProduct(deletedId);
+    // 3. Update active React state
     setProducts((prev) => {
       const updated = prev.filter((p) => p._id !== deletedId);
       try {
@@ -324,11 +330,42 @@ export default function App() {
       } catch {}
       return updated;
     });
+    // 4. Remove from shopping cart
     setCart((prev) => prev.filter((item) => item.productId !== deletedId));
+    // 5. Navigate away if viewing the deleted product detail
     if (selectedProductId === deletedId) {
       setSelectedProductId(null);
       setCurrentView('catalog');
     }
+  };
+
+  // Restore factory catalog (clears deletions and custom overrides)
+  const handleResetCatalog = async () => {
+    const restored = resetFactoryCatalog();
+    setProducts(restored);
+
+    try {
+      const isOwner = Boolean(
+        user && (user.isAdmin || user.email?.toLowerCase() === 'oreooreooreo9@gmail.com')
+      );
+      const token =
+        user?.token ||
+        localStorage.getItem('novastore_token') ||
+        (isOwner ? 'owner-token-oreo' : '');
+
+      await fetch('/api/products/reset', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+    } catch (err) {
+      console.info('Backend reset fallback:', err);
+    }
+
+    addToast(
+      'success',
+      'Factory Catalog Restored',
+      'Product catalog successfully restored to original 90 items.'
+    );
   };
 
   // Navigation Handlers
@@ -466,10 +503,27 @@ export default function App() {
                     </div>
                     <p className="text-[11px] text-slate-300 mt-0.5">
                       You have exclusive authority to add/delete inventory, edit owner details, rotate credentials, and inspect email security alerts.
+                      <span className="ml-2 font-mono text-emerald-400 font-semibold inline-flex items-center gap-1">
+                        • {products.length} active SKUs
+                        {getDeletedProductIds().length > 0 && ` (${getDeletedProductIds().length} deleted)`}
+                        {getCustomAddedProducts().length > 0 && ` (${getCustomAddedProducts().length} custom)`}
+                      </span>
                     </p>
                   </div>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  {getDeletedProductIds().length > 0 && (
+                    <button
+                      id="owner-banner-restore-btn"
+                      type="button"
+                      onClick={handleResetCatalog}
+                      className="px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-500 text-white text-xs font-bold flex items-center gap-1.5 shadow-2xs transition-colors"
+                      title="Restore all 90 factory products and clear deleted items list"
+                    >
+                      <RefreshCw className="w-3.5 h-3.5" />
+                      <span>Restore Factory SKUs ({getDeletedProductIds().length})</span>
+                    </button>
+                  )}
                   <button
                     id="owner-banner-settings-btn"
                     type="button"

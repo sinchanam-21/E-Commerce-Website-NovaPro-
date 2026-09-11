@@ -1,4 +1,6 @@
 import crypto from 'crypto';
+import fs from 'fs';
+import path from 'path';
 import { allProducts } from '../src/data';
 
 export interface DBProduct {
@@ -99,12 +101,44 @@ export interface DBOrder {
   cancellationReason?: string;
 }
 
-// In-Memory & Document Collections matching MongoDB schema
+// In-Memory & Persistent Document Collections matching MongoDB schema
 class MongoCollection<T extends { _id: string }> {
   private items: Map<string, T> = new Map();
+  private storageFile?: string;
 
-  constructor(initialData: T[] = []) {
+  constructor(initialData: T[] = [], storageFileName?: string) {
+    if (storageFileName) {
+      try {
+        const storageDir = path.join(process.cwd(), '.store_data');
+        if (!fs.existsSync(storageDir)) {
+          fs.mkdirSync(storageDir, { recursive: true });
+        }
+        this.storageFile = path.join(storageDir, storageFileName);
+        if (fs.existsSync(this.storageFile)) {
+          const raw = fs.readFileSync(this.storageFile, 'utf-8');
+          const saved: T[] = JSON.parse(raw);
+          if (Array.isArray(saved) && saved.length > 0) {
+            saved.forEach((item) => this.items.set(item._id, { ...item }));
+            return;
+          }
+        }
+      } catch (e) {
+        console.warn(`Failed reading persistent storage for ${storageFileName}:`, e);
+      }
+    }
+
     initialData.forEach((item) => this.items.set(item._id, { ...item }));
+    this.persist();
+  }
+
+  private persist() {
+    if (!this.storageFile) return;
+    try {
+      const all = Array.from(this.items.values());
+      fs.writeFileSync(this.storageFile, JSON.stringify(all, null, 2), 'utf-8');
+    } catch (e) {
+      console.warn(`Failed writing persistent store for ${this.storageFile}:`, e);
+    }
   }
 
   async find(filter?: (item: T) => boolean): Promise<T[]> {
@@ -129,6 +163,7 @@ class MongoCollection<T extends { _id: string }> {
     const _id = doc._id || crypto.randomBytes(12).toString('hex');
     const fullDoc = { ...doc, _id } as T;
     this.items.set(_id, fullDoc);
+    this.persist();
     return { ...fullDoc };
   }
 
@@ -137,15 +172,26 @@ class MongoCollection<T extends { _id: string }> {
     if (!existing) return null;
     const updated = { ...existing, ...update, _id: id };
     this.items.set(id, updated);
+    this.persist();
     return { ...updated };
   }
 
   async deleteOne(id: string): Promise<boolean> {
-    return this.items.delete(id);
+    const deleted = this.items.delete(id);
+    if (deleted) {
+      this.persist();
+    }
+    return deleted;
   }
 
   async count(): Promise<number> {
     return this.items.size;
+  }
+
+  async reset(items: T[]): Promise<void> {
+    this.items.clear();
+    items.forEach((item) => this.items.set(item._id, { ...item }));
+    this.persist();
   }
 }
 
@@ -234,11 +280,11 @@ const initialSecurityAlerts: DBSecurityAlert[] = [
   },
 ];
 
-// Initialize Collections
-export const productsCollection = new MongoCollection<DBProduct>(initialProducts);
-export const reviewsCollection = new MongoCollection<DBReview>(initialReviews);
-export const usersCollection = new MongoCollection<DBUser>(initialUsers);
-export const ordersCollection = new MongoCollection<DBOrder>([]);
-export const securityAlertsCollection = new MongoCollection<DBSecurityAlert>(initialSecurityAlerts);
+// Initialize Persistent Collections
+export const productsCollection = new MongoCollection<DBProduct>(initialProducts, 'products.json');
+export const reviewsCollection = new MongoCollection<DBReview>(initialReviews, 'reviews.json');
+export const usersCollection = new MongoCollection<DBUser>(initialUsers, 'users.json');
+export const ordersCollection = new MongoCollection<DBOrder>([], 'orders.json');
+export const securityAlertsCollection = new MongoCollection<DBSecurityAlert>(initialSecurityAlerts, 'security_alerts.json');
 
-export { hashPassword };
+export { hashPassword, initialProducts as defaultFactoryProducts };

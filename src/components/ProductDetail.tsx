@@ -72,15 +72,29 @@ export const ProductDetail: React.FC<ProductDetailProps> = ({
     setLoading(true);
     try {
       const res = await fetch(`/api/products/${productId}`);
-      if (!res.ok) throw new Error('Product not found');
-      const data = await res.json();
-      setProduct(data);
-      setReviews(data.reviews || []);
-      setActiveImageIndex(0);
-      setQuantity(1);
+      if (res.ok) {
+        const contentType = res.headers.get('content-type');
+        if (contentType && contentType.includes('application/json')) {
+          const data = await res.json();
+          setProduct(data);
+          setReviews(data.reviews || []);
+          setActiveImageIndex(0);
+          setQuantity(1);
+          return;
+        }
+      }
+      throw new Error('API unavailable or returned non-JSON');
     } catch (err) {
-      console.error('Failed to fetch product:', err);
-      onNotify('error', 'Error loading product', 'Could not load product details.');
+      console.info('Loading product details from local catalog:', err);
+      const fallback = allProducts.find((p) => p._id === productId);
+      if (fallback) {
+        setProduct(fallback);
+        setReviews([]);
+        setActiveImageIndex(0);
+        setQuantity(1);
+      } else {
+        onNotify('error', 'Product Not Found', 'Could not locate this item in the store catalog.');
+      }
     } finally {
       setLoading(false);
     }
