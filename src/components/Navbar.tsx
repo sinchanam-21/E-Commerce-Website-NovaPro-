@@ -80,8 +80,9 @@ export const Navbar: React.FC<NavbarProps> = ({
             <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-400">System Online</span>
           </div>
           <span className="text-slate-700">|</span>
-          <span className="hidden sm:inline text-[11px] text-slate-400 font-medium">
-            Express API • MongoDB Document Store v5.2
+          <span className="text-[11px] text-slate-400 font-medium flex items-center gap-1.5">
+            <span className="text-emerald-400 font-semibold">Cloud Sync</span>
+            <span className="hidden sm:inline">• Real-time Multi-Device Active (Firestore)</span>
           </span>
         </div>
 

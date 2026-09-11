@@ -1,0 +1,31 @@
+{
+  "entities": {
+    "catalog_sync": {
+      "title": "Catalog Sync",
+      "description": "Global synchronized state for product catalog including deletions and custom products across all devices",
+      "properties": {
+        "deletedIds": {
+          "type": "array",
+          "description": "List of product IDs deleted by the store owner"
+        },
+        "customProducts": {
+          "type": "array",
+          "description": "Custom products created by the store owner"
+        },
+        "updatedAt": {
+          "type": "number",
+          "description": "Timestamp of last modification"
+        }
+      }
+    },
+    "products": {
+      "title": "Products",
+      "description": "Store inventory items and override attributes",
+      "properties": {
+        "name": { "type": "string" },
+        "price": { "type": "number" },
+        "category": { "type": "string" }
+      }
+    }
+  }
+}

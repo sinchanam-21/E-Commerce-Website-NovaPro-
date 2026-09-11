@@ -19,6 +19,12 @@ import {
   getDeletedProductIds,
   getCustomAddedProducts,
 } from './utils/catalogStorage';
+import {
+  subscribeToCloudCatalog,
+  syncDeletionToCloud,
+  syncCustomProductToCloud,
+  syncResetToCloud,
+} from './utils/cloudSync';
 import { Navbar } from './components/Navbar';
 import { ProductCard } from './components/ProductCard';
 import { ProductDetail } from './components/ProductDetail';
@@ -116,9 +122,25 @@ export default function App() {
     }
   }, [user]);
 
-  // Load Products from Express API
+  // Load Products from Express API & Real-time Cloud Sync
   useEffect(() => {
     fetchProducts();
+
+    // Real-time Firebase Cloud synchronization across all devices & links
+    const unsubscribe = subscribeToCloudCatalog(({ deletedIds, customProducts }) => {
+      setProducts(() => {
+        const activeBase = allProducts.filter((p) => !deletedIds.includes(p._id));
+        const merged = [...customProducts, ...activeBase];
+        try {
+          localStorage.setItem('novastore_catalog', JSON.stringify(merged));
+        } catch {}
+        return merged;
+      });
+    });
+
+    return () => {
+      unsubscribe();
+    };
   }, []);
 
   const fetchProducts = async () => {
@@ -131,14 +153,14 @@ export default function App() {
       }
       const data = await res.json();
       if (Array.isArray(data) && data.length > 0) {
-        // Sanitize with local deletion and addition tracking
+        // Sanitize with local and cloud deletion tracking
         const sanitized = sanitizeAndPersistCatalog(data);
         setProducts(sanitized);
         return;
       }
     } catch (err) {
       // Backend not running (e.g. deployed on Vercel as static site) or offline
-      console.info('Using local persistent catalog tracking:', err);
+      console.info('Using local & cloud persistent catalog tracking:', err);
       setProducts(getInitialCatalog());
     } finally {
       setLoading(false);
@@ -302,6 +324,7 @@ export default function App() {
   // Store Owner Catalog Management Handlers
   const handleProductAdded = (newProduct: Product) => {
     saveCustomProduct(newProduct);
+    syncCustomProductToCloud(newProduct);
     setProducts((prev) => {
       const filtered = prev.filter((p) => p._id !== newProduct._id);
       const updated = [newProduct, ...filtered];
@@ -310,7 +333,7 @@ export default function App() {
       } catch {}
       return updated;
     });
-    addToast('success', 'SKU Added', `"${newProduct.name}" is now live in your store catalog.`);
+    addToast('success', 'SKU Added', `"${newProduct.name}" is now live in your store catalog across all devices.`);
   };
 
   const handleOpenDeleteModal = (product: Product) => {
@@ -318,11 +341,13 @@ export default function App() {
   };
 
   const handleProductDeleted = (deletedId: string) => {
-    // 1. Permanently record deletion in localStorage so it never returns on refresh
+    // 1. Permanently record deletion in localStorage
     saveDeletedProductId(deletedId);
     // 2. Remove from custom products if it was a custom added SKU
     removeCustomProduct(deletedId);
-    // 3. Update active React state
+    // 3. Broadcast deletion to Firebase Firestore so all other devices update instantly
+    syncDeletionToCloud(deletedId);
+    // 4. Update active React state
     setProducts((prev) => {
       const updated = prev.filter((p) => p._id !== deletedId);
       try {
@@ -330,9 +355,9 @@ export default function App() {
       } catch {}
       return updated;
     });
-    // 4. Remove from shopping cart
+    // 5. Remove from shopping cart
     setCart((prev) => prev.filter((item) => item.productId !== deletedId));
-    // 5. Navigate away if viewing the deleted product detail
+    // 6. Navigate away if viewing the deleted product detail
     if (selectedProductId === deletedId) {
       setSelectedProductId(null);
       setCurrentView('catalog');
@@ -343,6 +368,7 @@ export default function App() {
   const handleResetCatalog = async () => {
     const restored = resetFactoryCatalog();
     setProducts(restored);
+    syncResetToCloud();
 
     try {
       const isOwner = Boolean(
@@ -364,7 +390,7 @@ export default function App() {
     addToast(
       'success',
       'Factory Catalog Restored',
-      'Product catalog successfully restored to original 90 items.'
+      'Product catalog successfully restored to original 90 items on all devices.'
     );
   };
 
