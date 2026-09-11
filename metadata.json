@@ -1,0 +1,6 @@
+{
+  "name": "E-Commerce Website",
+  "description": "A mini e-commerce web application with Meesho and Flipkart style visual categories, authentic store owner access, catalog management, owner profile customization, password rotation, and real-time email security alerts.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
